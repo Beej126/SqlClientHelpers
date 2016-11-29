@@ -3,7 +3,9 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio 14
 VisualStudioVersion = 14.0.25420.1
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SqlClientHelpers", "SqlClientHelpers.csproj", "{8FECCD09-382C-406B-A63B-B8A239E60667}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SqlClientHelpers", "SqlClientHelpers\SqlClientHelpers.csproj", "{8FECCD09-382C-406B-A63B-B8A239E60667}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TestConsole", "TestConsole\TestConsole.csproj", "{8DF85A68-336B-4D38-B063-3B4096B7E2EC}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -18,6 +20,12 @@ Global
 		{8FECCD09-382C-406B-A63B-B8A239E60667}.Release|Any CPU.Build.0 = Release|Any CPU
 		{8FECCD09-382C-406B-A63B-B8A239E60667}.Test|Any CPU.ActiveCfg = Test|Any CPU
 		{8FECCD09-382C-406B-A63B-B8A239E60667}.Test|Any CPU.Build.0 = Test|Any CPU
+		{8DF85A68-336B-4D38-B063-3B4096B7E2EC}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{8DF85A68-336B-4D38-B063-3B4096B7E2EC}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{8DF85A68-336B-4D38-B063-3B4096B7E2EC}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{8DF85A68-336B-4D38-B063-3B4096B7E2EC}.Release|Any CPU.Build.0 = Release|Any CPU
+		{8DF85A68-336B-4D38-B063-3B4096B7E2EC}.Test|Any CPU.ActiveCfg = Release|Any CPU
+		{8DF85A68-336B-4D38-B063-3B4096B7E2EC}.Test|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

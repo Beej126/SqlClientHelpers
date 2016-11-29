@@ -15,7 +15,7 @@ public static class ReflectionHelpers
   /// <param name="property"> </param>
   /// <param name="value"></param>
   /// <returns>True = propery exists on obj</returns>
-  static public bool PropertySetter(object obj, string property, object value)
+  public static bool PropertySetter(object obj, string property, object value)
   {
     if (obj == null) return (false);
 
