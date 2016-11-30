@@ -109,19 +109,27 @@ namespace NextTech.SqlClientHelpers
     // i'm thinking this is a nice "good enough" for now to simply pass it in from the outercontext*/
     public Proc(string procName, string connectionString = null)
     {
-      ConnString = connectionString ?? ConnectionStringDefault;
-      var configConn = ConfigurationManager.ConnectionStrings[ConnString];
-      if (configConn != null) ConnString = configConn.ConnectionString;
+      try
+      {
+        ConnString = connectionString ?? ConnectionStringDefault;
+        var configConn = ConfigurationManager.ConnectionStrings[ConnString];
+        if (configConn != null) ConnString = configConn.ConnectionString;
 
-      CCrossThrowIf.ThrowIf.Argument.IsNull(() => ConnString, "Either Proc.ConnectionStringDefault must be set or specified in Proc constructor");
+        CCrossThrowIf.ThrowIf.Argument.IsNull(() => ConnString,
+          "Either Proc.ConnectionStringDefault must be set or specified in Proc constructor");
 
-      _procName = procName;
-      if (!_procName.Contains('.')) _procName = "dbo." + _procName;
+        _procName = procName;
+        if (!_procName.Contains('.')) _procName = "dbo." + _procName;
 
-      //_userName = userName;
-      //scratch that idea... see "NOOP" comment further down: if (_ProcName == "NOOP") return; //this supports doing nothing if we're chaining AssignParms(DataRowView).ExecuteNonQuery() and the DataRowView.Row.RowState == UnChanged
+        //_userName = userName;
+        //scratch that idea... see "NOOP" comment further down: if (_ProcName == "NOOP") return; //this supports doing nothing if we're chaining AssignParms(DataRowView).ExecuteNonQuery() and the DataRowView.Row.RowState == UnChanged
 
-      PopulateParameterCollection();
+        PopulateParameterCollection();
+      }
+      catch (Exception ex)
+      {
+        (OnErrorDefault ?? OnError)?.Invoke(ex);
+      }
     }
 
     static Proc()
