@@ -6,9 +6,10 @@ namespace TestConsole
   class Program
   {
     public static string Env(string name) => Environment.GetEnvironmentVariable(name);
-    static async void Main(string[] args)
+    static void Main(string[] args)
     {
       Proc.ConnectionStringDefault = Env("SqlClientHelpers_TestConnectionString");
+      CCrossThrowIf.ThrowIf.Argument.IsNull(() => Proc.ConnectionStringDefault, "Must set SqlClientHelpers_TestConnectionString ENVIRONMENT VARIABLE");
       Proc.OnSuccessDefault = () => Console.WriteLine("\r\nSuccess!\r\n");
       Proc.OnErrorDefault = (ex) => Console.WriteLine($"\r\nException: {ex.Message}\r\n");
 
@@ -18,7 +19,7 @@ namespace TestConsole
         var stdout = Console.OpenStandardOutput();
         
         //proc.ExecuteDataSetAsync().Wait();
-        (await proc.ExecuteReaderAsync()).ToJsonAsync(stdout).Wait();
+        proc.ExecuteJson(stdout, true);
       }
       Console.WriteLine("\r\n\r\nPress any key to end and close");
       Console.Read();

@@ -12,6 +12,7 @@ using System.Linq;
 using System.Reflection;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
+using Humanizer;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
@@ -31,7 +32,11 @@ namespace NextTech.SqlClientHelpers
   // ReSharper restore CheckNamespace
   ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
   {
-    public static IDisposable NewWaitObject() => new DummyDisposable();
+    /// <summary>
+    /// plug in your own IDisposable to be sandwitched around all DB calls
+    /// this way you have a natural start/stop "event" to trigger UI "spinners" etc
+    /// </summary>
+    public static Func<IDisposable> NewWaitObject = () => new DummyDisposable();
 
     private class DummyDisposable : IDisposable
     {
@@ -52,7 +57,7 @@ namespace NextTech.SqlClientHelpers
     public string SQLWarnings { get; private set; }
 
     /// <summary>
-    /// Establishing convention that all Sql Executions will trap exceptions and instead fire this event handler
+    /// Establishing convention that all Sql Executions will trap exceptions and instead fire this event handler (if assigned, otherwise throw)
     /// Facilitates typical UI messaging
     /// </summary>
     public Action<Exception> OnError;
@@ -61,6 +66,13 @@ namespace NextTech.SqlClientHelpers
     /// Static called if not set at proc instance level
     /// </summary>
     public static Action<Exception> OnErrorDefault;
+
+    private void HandleError(Exception ex)
+    {
+      var handler = OnError ?? OnErrorDefault;
+      if (handler != null) handler(ex);
+      else throw (ex);
+    }
 
     /// <summary>
     /// Upon successful Sql execution
@@ -128,13 +140,26 @@ namespace NextTech.SqlClientHelpers
       }
       catch (Exception ex)
       {
-        (OnErrorDefault ?? OnError)?.Invoke(ex);
+        HandleError(ex);
       }
     }
 
     static Proc()
     {
       ResetParmcache();
+
+      //**** embedding child assemblies from the bin\Release path so don't have to remember to copy those
+      AppDomain.CurrentDomain.AssemblyResolve += (sender, args) =>
+      {
+        var currentAssembly = Assembly.GetExecutingAssembly();
+        var resourceName = $"{currentAssembly.GetName().Name}.bin.Release.{new AssemblyName(args.Name).Name}.dll";
+        using (var stream = currentAssembly.GetManifestResourceStream(resourceName))
+        {
+          var assemblyData = new byte[stream.Length];
+          stream.Read(assemblyData, 0, assemblyData.Length);
+          return Assembly.Load(assemblyData);
+        }
+      };
     }
 
     private static Dictionary<string, SqlCommand> _parmcache;
@@ -203,7 +228,7 @@ namespace NextTech.SqlClientHelpers
 
       //strip the dbname off any UDT's... there appears to be a mismatch between the part of microsoft that wrote DeriveParameters and what SQL Server actually wants
       //otherwise you get this friendly error message:
-      //The incoming tabular data stream (TDS) remote procedure call (RPC) protocol stream is incorrect. Table-valued parameter 1 ("@MyTable"), row 0, column 0: Data type 0xF3 (user-defined table type) has a non-zero length database name specified.  Database name is not allowed with a table-valued parameter, only schema name and type name are valid.
+      //The incoming tabular data outStream (TDS) remote procedure call (RPC) protocol outStream is incorrect. Table-valued parameter 1 ("@MyTable"), row 0, column 0: Data type 0xF3 (user-defined table type) has a non-zero length database name specified.  Database name is not allowed with a table-valued parameter, only schema name and type name are valid.
       foreach (SqlParameter p in _cmd.Parameters)
         if (p.TypeName != "")
         {
@@ -215,15 +240,15 @@ namespace NextTech.SqlClientHelpers
       _parmcache.Add(parmcachekey, _cmd.Clone());
     }
 
-    public Proc AssignParms(Dictionary<string, object> values)
+    public Proc AssignParms(IDictionary<string, object> values)
     {
-      foreach (var nv in values) this["@" + nv.Key] = nv.Value;
+      if (values != null) foreach (var nv in values) this["@" + nv.Key] = nv.Value;
       return this;
     }
 
     public Proc AssignParms(NameValueCollection values)
     {
-      foreach (string key in values.Keys) this["@" + key] = values[key];
+      if (values != null) foreach (string key in values.Keys) this["@" + key] = values[key];
       return this;
     }
 
@@ -293,7 +318,7 @@ namespace NextTech.SqlClientHelpers
         catch (Exception ex)
         {
           //nugget: auto try reloading parms for the scenario where parms are cached and a new parameter has since been added
-          if (ex.Message.Contains("expects parameter"))
+          if (IsParameterRetryException(ex.Message))
           {
             PopulateParameterCollection(refreshCache: true);
             try
@@ -304,10 +329,12 @@ namespace NextTech.SqlClientHelpers
             }
             catch (Exception ex2)
             {
-              (OnErrorDefault ?? OnError)?.Invoke(ex2);
+              ex = ex2;
             }
           }
-          else (OnErrorDefault ?? OnError)?.Invoke(ex);
+          HandleError(ex);
+          _ds = null;
+          return null;
         }
       }
 
@@ -322,6 +349,13 @@ namespace NextTech.SqlClientHelpers
     private void ConnectionInfoMessageHandler(object sender, SqlInfoMessageEventArgs e)
     {
       SQLWarnings = e.Message;
+    }
+
+    private bool IsParameterRetryException(string message)
+    {
+      var isRetry = message.Contains("expects parameter") || message.Contains("has too many arguments specified");
+      if (isRetry) PopulateParameterCollection(refreshCache: true);
+      return isRetry;
     }
 
     private void NameTables()
@@ -354,19 +388,46 @@ namespace NextTech.SqlClientHelpers
     /// <summary>
     /// remember to wrap in using{} or otherwise call .Dispose
     /// </summary>
-    public async Task<SqlDataReader> ExecuteReaderAsync()
+    public SqlDataReader ExecuteReader(bool blobMode = false)
     {
-      try
+      using (NewWaitObject())
       {
-        var reader = await _cmd.ExecuteReaderAsync(CommandBehavior.CloseConnection);
-        (OnSuccessDefault ?? OnSuccess)?.Invoke();
-        return reader;
+        try
+        {
+          if (_cmd.Connection.State != ConnectionState.Open) _cmd.Connection.Open();
+          var reader =
+            _cmd.ExecuteReader(CommandBehavior.CloseConnection |
+                               (blobMode ? CommandBehavior.SequentialAccess : CommandBehavior.Default));
+          (OnSuccessDefault ?? OnSuccess)?.Invoke();
+          return reader;
+        }
+        catch (Exception ex)
+        {
+          if (IsParameterRetryException(ex.Message))
+          {
+            try
+            {
+              if (_cmd.Connection.State != ConnectionState.Open) _cmd.Connection.Open();
+              var reader =
+                _cmd.ExecuteReader(CommandBehavior.CloseConnection |
+                                   (blobMode ? CommandBehavior.SequentialAccess : CommandBehavior.Default));
+              (OnSuccessDefault ?? OnSuccess)?.Invoke();
+              return reader;
+            }
+            catch (Exception ex2)
+            {
+              ex = ex2;
+            }
+          }
+          HandleError(ex);
+          return null;
+        }
       }
-      catch (Exception ex)
-      {
-        (OnErrorDefault ?? OnError)?.Invoke(ex);
-        return null;
-      }
+    }
+
+    public void ExecuteJson(Stream outStream, bool titleCasePropertyNames = false)
+    {
+      ExecuteReader().ToJson(outStream, titleCasePropertyNames);
     }
 
     /// <summary>
@@ -374,7 +435,7 @@ namespace NextTech.SqlClientHelpers
     /// Useful for Sproc Parameter only executions - noteably: output parms are populated
     /// </summary>
     /// <returns>True = executed without exception</returns>
-    public async Task<bool> ExecuteNonQueryAsync()
+    public bool ExecuteNonQuery()
     {
       if (_cmd == null) return false;
 
@@ -382,30 +443,29 @@ namespace NextTech.SqlClientHelpers
       {
         try
         {
-          await _cmd.ExecuteNonQueryAsync();
+          _cmd.ExecuteNonQuery();
           (OnSuccessDefault ?? OnSuccess)?.Invoke();
           return true;
         }
         catch (Exception ex)
         {
           //nugget: auto try reloading parms for the scenario where parms are cached and a new parameter has since been added
-          if (ex.Message.Contains("expects parameter"))
+          if (IsParameterRetryException(ex.Message))
           {
-            PopulateParameterCollection(refreshCache: true);
             try
             {
-              await _cmd.ExecuteNonQueryAsync();
+              _cmd.ExecuteNonQuery();
               (OnSuccessDefault ?? OnSuccess)?.Invoke();
               return true;
             }
             catch (Exception ex2)
             {
-              (OnErrorDefault ?? OnError)?.Invoke(ex2);
+              ex = ex2;
             }
           }
-          else (OnErrorDefault ?? OnError)?.Invoke(ex);
+          HandleError(ex);
+          return false;
         }
-        return false;
       }
     }
 
@@ -536,35 +596,71 @@ namespace NextTech.SqlClientHelpers
         .ToDictionary(i => i.Column, i => i.Value != DBNull.Value ? i.Value : null));
     }
 
+    //from sample: https://msdn.microsoft.com/en-us/library/hh556234(v=vs.110).aspx
+    public static async Task ToStreamAsync(this SqlDataReader reader, Stream outStream, string fieldName = null)
+    {
+      using (reader)
+      {
+        if (await reader.ReadAsync())
+        {
+          var fieldIndex = 0;
+          if (!string.IsNullOrWhiteSpace(fieldName)) fieldIndex = reader.GetOrdinal(fieldName);
+          if (!(await reader.IsDBNullAsync(fieldIndex)))
+          {
+            using (var data = reader.GetStream(fieldIndex))
+            {
+              // Asynchronously copy the outStream from the server to the file we just created
+              await data.CopyToAsync(outStream);
+              outStream.Flush();
+            }
+          }
+        }
+      }
+    }
+
     //from: http://stackoverflow.com/a/34927336/813599
     //with edits: removed naming each table
     //TODO: this could however be extended to use @TableNames output parm convention elsewhere in this code if that proved useful
-    public static async Task ToJsonAsync(this SqlDataReader reader, Stream stream)
+    //actually, bummer, turns out sql server doesn't deliver output params until reader is finished :(
+    //which would ruin streaming the results out blindly, because we'd have to capture results to apply the table names
+    public static void ToJson(this SqlDataReader reader, Stream outStream, bool titleCasePropertyNames = false)
     {
       if (reader == null) return;
       using (reader)
-      using (var writer = new JsonTextWriter(new StreamWriter(stream)))
+      using (var writer = new JsonTextWriter(new StreamWriter(outStream)))
       {
+        var titleCase = (Func<string, string>)(inStr =>
+          (titleCasePropertyNames && char.IsLetter(inStr[0])) ? 
+          inStr.Humanize(LetterCasing.Title) : inStr );
+        string fromDict;
+        var getName = (Func<Dictionary<int, string>, int, string>)((dict, colIdx) => 
+          dict.TryGetValue(colIdx, out fromDict)
+           ? fromDict //return previous from dictionary
+           : (dict[colIdx] = titleCase(reader.GetName(colIdx)))
+        );
+
         writer.WriteStartArray();
         do
         {
+          var nameDict = new Dictionary<int, string>();
           writer.WriteStartArray();
-          while (await reader.ReadAsync())
+          while (reader.Read())
           {
             writer.WriteStartObject();
             for (var columnIndex = 0; columnIndex < reader.FieldCount; columnIndex++)
             {
               if (reader.IsDBNull(columnIndex)) continue;
-              writer.WritePropertyName(reader.GetName(columnIndex));
+              writer.WritePropertyName(getName(nameDict, columnIndex));
               writer.WriteValue(reader.GetValue(columnIndex));
             }
             writer.WriteEndObject();
           }
           writer.WriteEndArray();
-        } while (await reader.NextResultAsync());
+        } while (reader.NextResult());
 
         writer.WriteEndArray();
         writer.Flush();
+        outStream.Flush();
       }
     }
 
