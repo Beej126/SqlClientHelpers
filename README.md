@@ -9,7 +9,7 @@
 * and one liner proc parm assignment by standard collections like Dictionary and NameValueCollection
 
 ### Peculiarities
-* one mildly screwy thing i'm doing is embedding the Newtonsoft.Json.dll and Humanizer.dll into the SqlClientHelpers.dll as resources as a convenience to copy deployment
+* one mildly screwy thing, for deployment convenience, is Newtonsoft.Json.dll and Humanizer.dll are embedded resources of SqlClientHelpers.dll.
 
 #### Minimal sample usage:
 ```C#
